@@ -1,4 +1,4 @@
-FROM node:10.15.1
+FROM node:10.15.1 AS deps
 
 # Install VS Code's deps. These are the only two it seems we need.
 RUN apt-get update && apt-get install -y \
@@ -15,19 +15,32 @@ COPY . .
 # directly which should be fast as it is slow because it populates its own cache every time.
 RUN yarn && NODE_ENV=production yarn task build:server:binary
 
+# Docker stage we'll use later for the CLI
+FROM ubuntu:18.04 AS docker
+
+RUN apt-get update && apt-get install -y \
+    apt-transport-https \
+    ca-certificates \
+    curl \
+    gnupg-agent \
+    software-properties-common
+
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add - && \
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" && \
+	apt-get update && \
+	apt-get install -y docker-ce-cli
+
 # We deploy with ubuntu so that devs have a familiar environment.
 FROM ubuntu:18.04
 
 RUN apt-get update && apt-get install -y \
-	openssl \
-	net-tools \
-	git \
-	locales \
-	sudo \
-	dumb-init \
-	vim \
 	curl \
-	wget
+	dumb-init \
+	git \
+	locales \	
+	openssl \
+	net-tools \	
+	sudo
 
 RUN locale-gen en_US.UTF-8
 # We unfortunately cannot use update-locale because docker will not use the env variables
@@ -40,14 +53,10 @@ RUN adduser --gecos '' --disabled-password coder && \
 USER coder
 # We create first instead of just using WORKDIR as when WORKDIR creates, the user is root.
 RUN mkdir -p /home/coder/project
-
 WORKDIR /home/coder/project
 
-# This assures we have a volume mounted even if the user forgot to do bind mount.
-# So that they do not lose their data if they delete the container.
-VOLUME [ "/home/coder/project" ]
-
-COPY --from=0 /src/packages/server/cli-linux-x64 /usr/local/bin/code-server
-EXPOSE 80
-
+EXPOSE 8443
 ENTRYPOINT ["dumb-init", "code-server"]
+
+COPY --from=docker /usr/bin/docker /usr/local/bin/docker
+COPY --from=deps /src/packages/server/cli-linux-x64 /usr/local/bin/code-server
